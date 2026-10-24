@@ -1,0 +1,46 @@
+name: zipinfo macOS check
+
+# Runs only when the zipinfo-macos-check branch is pushed (or by hand).
+on:
+  push:
+    branches: [zipinfo-macos-check]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: macos-latest
+    steps:
+      - name: What macOS zipinfo prints for a UTF-8 name
+        run: |
+          sw_vers
+          python3 -c "import zipfile; zipfile.ZipFile('/tmp/u.zip','w').writestr('unicode-名前.txt','x')"
+          unzip -v | head -1
+          echo "UNICODE_SUPPORT lines in unzip -v: $(unzip -v | grep -c UNICODE_SUPPORT || true)"
+          echo "zipinfo bytes for the name (expected real name: ... 2d e5 90 8d e5 89 8d 2e ...):"
+          LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 zipinfo /tmp/u.zip | grep unicode | xxd
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26.12.1
+
+      - name: Run the interop test from main, PR 66978 and the fix branch
+        run: |
+          git clone --quiet --depth 1 --filter=blob:none --sparse https://github.com/nodejs/node.git node
+          cd node
+          git sparse-checkout set test/common
+          mkdir -p test/parallel
+          raw=https://raw.githubusercontent.com
+          curl -sSfL "$raw/nodejs/node/1eb734d568c9db7278c37a37e89d44a3356cdb63/test/parallel/test-zlib-zip-interop.js" -o test/parallel/interop-main.js
+          curl -sSfL "$raw/ravi-arnan/node/288cb78e69c33ad70225a02be8727e9573e5eb91/test/parallel/test-zlib-zip-interop.js" -o test/parallel/interop-66978.js
+          curl -sSfL "$raw/vedchaudhari/node/55c9244baa4c56611a4971aa623b618e5ce4ef4f/test/parallel/test-zlib-zip-interop.js" -o test/parallel/interop-fix.js
+          node --version
+          for v in main 66978 fix; do
+            echo "::group::$v"
+            if node test/parallel/interop-$v.js; then result=PASS; else result=FAIL; fi
+            echo "::endgroup::"
+            echo "RESULT $v: $result"
+            echo "- $v: $result" >> "$GITHUB_STEP_SUMMARY"
+          done
